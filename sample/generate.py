@@ -252,9 +252,8 @@ def main(args=None):
     return out_path
 
 
-def save_multiple_samples(out_path, file_templates,  animations, fps, max_frames, no_dir=False):
+def save_multiple_samples(out_path, file_templates,  animations, fps, max_frames, num_samples_in_out_file=1, no_dir=False):
     
-    num_samples_in_out_file = 3
     n_samples = animations.shape[0]
     
     for sample_i in range(0,n_samples,num_samples_in_out_file):
