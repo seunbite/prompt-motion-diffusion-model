@@ -194,21 +194,7 @@ def main(args=None):
         shutil.rmtree(out_path)
     os.makedirs(out_path)
 
-    npy_path = os.path.join(out_path, 'results.npy')
-    print(f"saving results file to [{npy_path}]")
-    np.save(npy_path,
-            {'motion': all_motions, 'text': all_text, 'lengths': all_lengths,
-             'num_samples': args.num_samples, 'num_repetitions': args.num_repetitions})
-    if args.dynamic_text_path != '':
-        text_file_content = '\n'.join(['#'.join(s) for s in all_text])
-    else:
-        text_file_content = '\n'.join(all_text)
-    with open(npy_path.replace('.npy', '.txt'), 'w') as fw:
-        fw.write(text_file_content)
-    with open(npy_path.replace('.npy', '_len.txt'), 'w') as fw:
-        fw.write('\n'.join([str(l) for l in all_lengths]))
-
-    print(f"saving visualizations to [{out_path}]...")
+    print(f"saving individual motion files to [{out_path}]...")
     skeleton = paramUtil.kit_kinematic_chain if args.dataset == 'kit' else paramUtil.t2m_kinematic_chain
 
     sample_print_template, row_print_template, all_print_template, \
@@ -218,8 +204,8 @@ def main(args=None):
     animations = np.empty(shape=(args.num_samples, args.num_repetitions), dtype=object)
     max_length = max(all_lengths)
 
+    # Save each motion individually
     for sample_i in range(args.num_samples):
-        rep_files = []
         for rep_i in range(args.num_repetitions):
             caption = all_text[rep_i*args.batch_size + sample_i]
             if args.dynamic_text_path != '':  # caption per frame
@@ -229,22 +215,63 @@ def main(args=None):
                     caption_per_frame += [c] * args.pred_len
                 caption = caption_per_frame
 
-            
             # Trim / freeze motion if needed
             length = all_lengths[rep_i*args.batch_size + sample_i]
             motion = all_motions[rep_i*args.batch_size + sample_i].transpose(2, 0, 1)[:max_length]
             if motion.shape[0] > length:
                 motion[length:-1] = motion[length-1]  # duplicate the last frame to end of motion, so all motions will be in equal length
 
-            save_file = sample_file_template.format(sample_i, rep_i)
-            animation_save_path = os.path.join(out_path, save_file)
-            gt_frames = np.arange(args.context_len) if args.context_len > 0 and not args.autoregressive else []
-            animations[sample_i, rep_i] = plot_3d_motion(animation_save_path, 
-                                                         skeleton, motion, dataset=args.dataset, title=caption, 
-                                                         fps=fps, gt_frames=gt_frames)
-            rep_files.append(animation_save_path)
+            # Create individual motion directory
+            motion_dir = os.path.join(out_path, f'motion_{sample_i:03d}_rep_{rep_i:02d}')
+            os.makedirs(motion_dir, exist_ok=True)
+            
+            # Save individual motion data
+            motion_data = {
+                'motion': motion,
+                'text': caption,
+                'length': length,
+                'sample_idx': sample_i,
+                'rep_idx': rep_i
+            }
+            np.save(os.path.join(motion_dir, 'motion.npy'), motion_data)
+            
+            # Save text file
+            with open(os.path.join(motion_dir, 'text.txt'), 'w') as f:
+                f.write(caption if isinstance(caption, str) else '\n'.join(caption))
+            
+            # Save length file
+            with open(os.path.join(motion_dir, 'length.txt'), 'w') as f:
+                f.write(str(length))
 
-    save_multiple_samples(out_path, {'all': all_file_template}, animations, fps, max(list(all_lengths) + [n_frames]))
+            # Generate 3D plot and video
+            if args.save_3d_plot:
+                save_file = sample_file_template.format(sample_i, rep_i)
+                animation_save_path = os.path.join(motion_dir, save_file)
+                gt_frames = np.arange(args.context_len) if args.context_len > 0 and not args.autoregressive else []
+                animations[sample_i, rep_i] = plot_3d_motion(animation_save_path, 
+                                                            skeleton, motion, dataset=args.dataset, title=caption, 
+                                                            fps=fps, gt_frames=gt_frames)
+            
+
+    # Also save the combined results.npy for backward compatibility
+    npy_path = os.path.join(out_path, 'results.npy')
+    print(f"saving combined results file to [{npy_path}]")
+    np.save(npy_path,
+            {'motion': all_motions, 'text': all_text, 'lengths': all_lengths,
+             'num_samples': args.num_samples, 'num_repetitions': args.num_repetitions})
+    
+    if args.dynamic_text_path != '':
+        text_file_content = '\n'.join(['#'.join(s) for s in all_text])
+    else:
+        text_file_content = '\n'.join(all_text)
+    with open(npy_path.replace('.npy', '.txt'), 'w') as fw:
+        fw.write(text_file_content)
+    with open(npy_path.replace('.npy', '_len.txt'), 'w') as fw:
+        fw.write('\n'.join([str(l) for l in all_lengths]))
+
+    # Create combined video if requested
+    if args.num_samples > 1 and args.save_3d_plot:
+        save_multiple_samples(out_path, {'all': all_file_template}, animations, fps, max(list(all_lengths) + [n_frames]))
 
     abs_path = os.path.abspath(out_path)
     print(f'[Done] Results are at [{abs_path}]')

@@ -214,6 +214,7 @@ def add_sampling_options(parser):
 
 def add_generate_options(parser):
     group = parser.add_argument_group('generate')
+    group.add_argument("--save_3d_plot", action='store_true', help="If true, will save 3D plot of the generated motion.")
     group.add_argument("--motion_length", default=6.0, type=float,
                        help="The length of the sampled motion [in seconds]. "
                             "Maximum is 9.8 for HumanML3D (text-to-motion), and 2.0 for HumanAct12 (action-to-motion)")

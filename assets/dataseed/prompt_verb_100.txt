@@ -1,0 +1,80 @@
+A person walks
+A person runs
+A person jumps
+A person sits
+A person stands
+A person waves (broad arm)
+A person nods
+A person shakes head
+A person points
+A person bows
+A person salutes
+A person dances
+A person spins
+A person kicks
+A person punches
+A person throws
+A person catches
+A person picks up
+A person drops
+A person pushes
+A person pulls
+A person leans
+A person stretches
+A person yawns
+A person sips
+A person eats
+A person sleeps
+A person blinks
+A person looks around
+A person covers eyes
+A person scratches head
+A person taps foot
+A person folds arms
+A person opens arms
+A person closes arms
+A person whispers (mouth movement implied but coarse)
+A person shouts
+A person reads
+A person writes
+A person types
+A person draws (broad arm movement)
+A person gestures emphatically (large arm sweep)
+A person waves goodbye (arm wave)
+A person hugs
+A person celebrates by raising arms
+A person thinks with hand on chin (coarse)
+A person browses (scroll motion with whole arm)
+A person zooms in (leans forward)
+A person zooms out (leans back)
+A person shrinks (body scaling / crouches)
+A person grows (stands tall)
+A person flies (hovers)
+A person swims
+A person crawls
+A person sneaks
+A person tiptoes
+A person checks watch (coarse arm lift)
+A person takes a photo (holds imaginary camera with general arm pose)
+A person records with an imaginary camera (broad pose)
+A person meditates in lotus pose
+A person prays
+A person waves magic (large arm movement)
+A person casts a spell (dramatic whole-arm motion)
+A person charges energy (body glowing/gathering)
+A person teleports (vanishes and reappears)
+A person freezes (holds still)
+A person poses confidently with hands on hips
+A person surrenders with hands up
+A person faces off with intense stare
+A person whispers a secret (close lean)
+A person ponders looking upward
+A person sneezes
+A person coughs
+A person waves a fan (broad arm)
+A person mimes an invisible wall (large arm/torso motion)
+A person gestures “stop” (palm-facing, coarse)
+A person reveals by pulling back a curtain
+A person hides by ducking behind something
+A person laughs nervously while shifting (body jitter, avoid face detail)
+A person runs in place

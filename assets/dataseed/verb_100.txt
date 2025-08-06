@@ -1,0 +1,100 @@
+Walk
+Run
+Jump
+Sit
+Stand
+Wave
+Nod
+Shake head
+Smile
+Frown
+Laugh
+Cry
+Point
+Clap
+Shrug
+Bow
+Salute
+Dance
+Spin
+Kick
+Punch
+Throw
+Catch
+Pick up
+Drop
+Push
+Pull
+Lean
+Stretch
+Yawn
+Sip
+Eat
+Sleep
+Blink
+Look around
+Cover eyes
+Scratch head
+Tap foot
+Fold arms
+Open hands
+Close hands
+Whisper
+Shout
+Read
+Write
+Type
+Draw
+Gesture emphatically
+Wave goodbye
+Hug
+High-five
+Facepalm
+Celebrate (raise arms)
+Think (hand on chin)
+Browse (scroll)
+Zoom in
+Zoom out
+Shrink
+Grow
+Fly (hover)
+Swim
+Crawl
+Sneak
+Tiptoe
+Spin a tool (e.g., pen twirl)
+Check watch
+Take photo
+Record (hold imaginary camera)
+Meditate (lotus pose)
+Pray
+Wave magic
+Cast spell
+Charge (gather energy)
+Teleport (vanish/reappear)
+Freeze (hold still)
+Shake hands
+Introduce (present with open palm)
+Confident pose (hands on hips)
+Surrender (hands up)
+Face off (intense stare)
+Whisper secret
+Ponder (look upward)
+Sneeze
+Cough
+Wave fan (cooling)
+Fist pump
+Mime (invisible wall)
+Gesture “come here”
+Gesture “stop”
+Scroll (finger swipe)
+Snap fingers
+Blow kiss
+Reveal (pull back curtain)
+Hide (duck behind)
+Laugh nervously (awkward shift)
+Run in place
+Survey (hands shading eyes)
+Carry (hold object with effort)
+Repair (pretend to fix)
+Celebrate with confetti (throw imaginary confetti)

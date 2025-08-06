@@ -7,6 +7,7 @@ import pandas as pd
 import json
 import numpy as np
 
+
 def main(
     model_name_or_path: str = "Qwen/Qwen2.5-VL-32B-Instruct",
     data_name: str = 'example_personality_prompts',

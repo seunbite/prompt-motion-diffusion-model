@@ -1,18 +1,9 @@
-#!/usr/bin/env python3
-"""
-MDM to Humanoid Robot Retargeting - Unitree G1 Support
-다양한 휴머노이드 로봇에 MDM 모션을 리타게팅하는 스크립트 (G1 특화)
-"""
-
 import sys
 import os
 import numpy as np
-import json
 from tqdm import trange
 from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass
 import cv2
-import os
 
 import mujoco
 sys.path.append('../exercise-yet-another-mujoco-tutorial-v3/package/helper/')
@@ -42,6 +33,41 @@ def ensure_T_joi_src_is_4x4(T_joi_src):
         N = T_joi_src.shape[0]
         T = np.tile(np.eye(4), (N, 1, 1))
         T[:, :3, :3] = T_joi_src
+        return T
+    # (joints, features) 형태인 경우 → (joints, 4, 4)로 변환
+    elif T_joi_src.ndim == 2:
+        N_joints = T_joi_src.shape[0]
+        N_features = T_joi_src.shape[1]
+        
+        # 각 joint에 대해 4x4 변환 행렬 생성
+        T = np.tile(np.eye(4), (N_joints, 1, 1))
+        
+        # features를 4x4 행렬로 재구성
+        if N_features >= 16:
+            # 16개씩 묶어서 4x4 행렬로 변환
+            for i in range(N_joints):
+                if i * 16 < N_features:
+                    features = T_joi_src[i, :16]
+                    T[i] = features.reshape(4, 4)
+        elif N_features >= 12:
+            # 12개씩 묶어서 3x4 행렬로 변환 후 4x4로 확장
+            for i in range(N_joints):
+                if i * 12 < N_features:
+                    features = T_joi_src[i, :12]
+                    T_3x4 = features.reshape(3, 4)
+                    T[i, :3, :] = T_3x4
+        elif N_features >= 6:
+            # 6개씩 묶어서 3x3 회전행렬로 변환 후 4x4로 확장
+            for i in range(N_joints):
+                if i * 6 < N_features:
+                    features = T_joi_src[i, :6]
+                    R_3x3 = features.reshape(3, 3)
+                    T[i, :3, :3] = R_3x3
+        else:
+            # 단순히 위치 정보만 사용 (첫 3개 features를 위치로)
+            for i in range(N_joints):
+                if N_features >= 3:
+                    T[i, :3, 3] = T_joi_src[i, :3]
         return T
     else:
         raise ValueError(f"Unknown T_joi_src shape: {T_joi_src.shape}")
@@ -73,12 +99,152 @@ class MDMToHumanoidRetargeter():
         self.height = 480
         self.camera_distance = 4
 
-        # free camera 생성
+
         self.free_cam = mujoco.MjvCamera()
         mujoco.mjv_defaultCamera(self.free_cam)
         self.free_cam.azimuth = 90      # 좌우 회전 (원하는 값으로 조절)
         self.free_cam.elevation = -15   # 위/아래 각도
         self.free_cam.distance = self.camera_distance
+
+    def auto_scale_and_rotation(self, motion_data: np.ndarray, env: MuJoCoParserClass):
+        source_height, source_orientation, source_center = self._calculate_source_dimensions(motion_data, ensure=True)
+        target_height, target_orientation, target_center = self._calculate_target_dimensions(env)
+        
+        position_offset = target_center - source_center
+        scale = target_height / source_height if source_height > 0 else 1.0
+        scale = np.clip(scale, 0.1, 10.0)
+        
+        rotation = self._calculate_rotation_difference(source_orientation, target_orientation)
+        rotation = tuple(np.clip(rot, -180, 180) for rot in rotation)
+        
+        print(f"🔍 자동 위치/스케일/회전 계산:")
+        print(f"   소스 중심: {source_center}, 키: {source_height:.3f}m, 방향: {source_orientation:.1f}°")
+        print(f"   타겟 중심: {target_center}, 키: {target_height:.3f}m, 방향: {target_orientation:.1f}°")
+        
+        return position_offset, scale, rotation
+            
+    
+    def _calculate_source_dimensions(self, motion_data: np.ndarray, ensure: bool = False) -> Tuple[float, float, np.ndarray]:
+        head_pos = motion_data[0, self.smpl_to_g1_idx['neck'], :3]
+        left_foot_pos = motion_data[0, self.smpl_to_g1_idx['la'], :3]
+        right_foot_pos = motion_data[0, self.smpl_to_g1_idx['ra'], :3]
+        foot_center = (left_foot_pos + right_foot_pos) / 2
+        center = (head_pos + foot_center) / 2
+        
+        height = np.linalg.norm(head_pos - foot_center)
+        
+        head_foot_vector = head_pos - foot_center
+        horizontal_angle = np.degrees(np.arctan2(head_foot_vector[1], head_foot_vector[0]))
+        
+        foot_direction = right_foot_pos - left_foot_pos
+        foot_angle = np.degrees(np.arctan2(foot_direction[1], foot_direction[0]))
+        
+        overall_orientation = (horizontal_angle + foot_angle) / 2
+        
+        return height, overall_orientation, center
+    
+    def _calculate_target_dimensions(self, env: MuJoCoParserClass) -> Tuple[float, float, np.ndarray]:
+        """
+        타겟 로봇에서 키, 방향, 중심점 계산
+        
+        Returns:
+            height: 머리에서 발까지의 거리 (미터)
+            orientation: 머리-발 방향 각도 (도)
+            center: 로봇의 중심점 (x, y, z)
+        """
+        # 로봇의 현재 관절 위치 가져오기
+        T_joi_trgt = get_T_joi_from_g1(env)
+        
+        # 머리(neck)와 발(ankle) 위치 추출
+        head_pos = t2p(T_joi_trgt['neck'])
+        left_foot_pos = t2p(T_joi_trgt['la'])
+        right_foot_pos = t2p(T_joi_trgt['ra'])
+        
+        # 발 중간점 계산
+        foot_center = (left_foot_pos + right_foot_pos) / 2
+        
+        # 중심점 계산 (머리와 발의 중간점)
+        center = (head_pos + foot_center) / 2
+        
+        # 키 계산 (머리에서 발까지의 거리)
+        height = np.linalg.norm(head_pos - foot_center)
+        
+        # 방향 계산 (머리-발 벡터의 수평면에서의 각도)
+        head_foot_vector = head_pos - foot_center
+        horizontal_angle = np.degrees(np.arctan2(head_foot_vector[1], head_foot_vector[0]))
+        
+        # 발꿈치-발앞꿈치 방향도 고려 (발의 방향)
+        foot_direction = right_foot_pos - left_foot_pos
+        foot_angle = np.degrees(np.arctan2(foot_direction[1], foot_direction[0]))
+        
+        # 전체 방향은 머리-발 방향과 발 방향의 평균
+        overall_orientation = (horizontal_angle + foot_angle) / 2
+        
+        return height, overall_orientation, center
+    
+    def _calculate_rotation_difference(self, source_orientation: float, target_orientation: float) -> Tuple[float, float, float]:
+        """
+        소스와 타겟 방향의 차이를 계산하여 회전 각도 반환
+        
+        Args:
+            source_orientation: 소스 방향 각도 (도)
+            target_orientation: 타겟 방향 각도 (도)
+            
+        Returns:
+            rotation: (x, y, z) 회전 각도 (도)
+        """
+        # Y축 회전 (수평면에서의 회전)
+        y_rotation = target_orientation - source_orientation
+        
+        # 각도를 -180 ~ 180 범위로 정규화
+        while y_rotation > 180:
+            y_rotation -= 360
+        while y_rotation < -180:
+            y_rotation += 360
+        
+        # X축과 Z축 회전은 0으로 설정 (필요시 추가 계산 가능)
+        x_rotation = 0.0
+        z_rotation = 0.0
+        
+        return (x_rotation, y_rotation, z_rotation)
+
+    def apply_scale_and_rotation(self, motion_data: np.ndarray, position_offset: np.ndarray = None, scale: float = None, rotation: Tuple[float, float, float] = None):
+        if position_offset is None or scale is None or rotation is None:
+            position_offset, scale, rotation = self.auto_scale_and_rotation(motion_data, self.env)
+        
+        rot_matrix = R.from_euler('xyz', rotation, degrees=True).as_matrix()
+        
+        if motion_data.ndim == 4:
+            # (batch, joints, features, frames)
+            for i in range(motion_data.shape[0]):
+                for j in range(motion_data.shape[1]):
+                    for k in range(motion_data.shape[3]):
+                        # 위치 정보 추출 (처음 3개 요소가 위치)
+                        pos = motion_data[i, j, :3, k]
+                        
+                        # 변환 적용: 위치 오프셋 + 스케일 + 회전
+                        pos = (pos * scale) + position_offset
+                        pos = rot_matrix @ pos
+                        
+                        # 변환된 위치를 다시 저장
+                        motion_data[i, j, :3, k] = pos
+                        
+        elif motion_data.ndim == 3: # (frames, joints, features)
+            for i in range(motion_data.shape[0]):
+                for j in range(motion_data.shape[1]):
+                    # 위치 정보 추출 (처음 3개 요소가 위치)
+                    pos = motion_data[i, j, :3]
+                    
+                    # 변환 적용: 위치 오프셋 + 스케일 + 회전
+                    pos = (pos * scale) + position_offset
+                    pos = rot_matrix @ pos
+                    
+                    # 변환된 위치를 다시 저장
+                    motion_data[i, j, :3] = pos
+        else:
+            raise ValueError(f"Unexpected motion data shape: {motion_data.shape}")
+        
+        return motion_data
 
     def retarget_g1_mujoco(
         self, 
@@ -86,22 +252,28 @@ class MDMToHumanoidRetargeter():
         update_base_every_frame: bool = False, 
         visualize: bool = False, 
         filename: str = 'save/retargeted_motion.mp4', 
-        fps: int = 20
+        fps: int = 20,
+        show_target_spheres: bool = True,
+        position_offset: Optional[np.ndarray] = None,
+        scale: Optional[float] = None,
+        rotation: Optional[Tuple[float, float, float]] = None
         ):
         if self.env is None:
             raise ValueError("MuJoCo 환경이 없습니다.")
         
+        motion_data = self.apply_scale_and_rotation(motion_data, position_offset, scale, rotation)
+        
         qpos_list = []
         video_frames = []
         renderer = mujoco.Renderer(self.env.model, width=self.width, height=self.height)
-        frames = motion_data.shape[-1]
+        frames = motion_data.shape[0]
         target_spheres_list = []
         if visualize:
             self.env.init_viewer(title='MDM to G1 Motion Retargeting', transparent=True)
         
         tick = 0
         for tick in trange(frames):
-            T_joi_src = motion_data[0, :, :, tick]
+            T_joi_src = motion_data[tick, :, :] 
             T_joi_src = ensure_T_joi_src_is_4x4(T_joi_src)
             T_joi_src = {k: T_joi_src[v, :, :] for k, v in self.smpl_to_g1_idx.items()}
 
@@ -111,6 +283,7 @@ class MDMToHumanoidRetargeter():
                 
                 self.env.set_T_base_body(body_name='pelvis',T=T_base_trgt)
                 self.env.forward()
+                # self.env.step()
 
             # Retargeting
             T_joi_trgt = get_T_joi_from_g1(self.env)
@@ -248,6 +421,7 @@ class MDMToHumanoidRetargeter():
                     break
                     
                 self.env.forward(q=qpos)
+                # self.env.step(ctrl=qpos, joint_names=self.env.joint_names)
                         
                 # except Exception as e:
                 #     print(f"Error in mj_integratePos at tick {tick}: {e}")
@@ -260,19 +434,18 @@ class MDMToHumanoidRetargeter():
                         
             status = "converged" if ik_converged else "failed"
             print(f"Tick {tick}: IK {status} after {ik_tick+1}/{max_ik_tick} iterations, Error: {np.linalg.norm(ik_err_stack):.4f}")
-            print(f"qpos: {self.env.get_qpos()}")
             qpos_list.append(self.env.get_qpos())
-            video_frame = self.grab_image(target_spheres_list, renderer)
+            video_frame = self.grab_image(target_spheres_list, renderer, show_target_spheres=show_target_spheres)
             video_frames.append(video_frame)
             
         if visualize:
             self.env.close_viewer()
             
         imageio.mimsave(filename, video_frames, fps=fps)
-        print(f"[MuJoCo] mp4 저장 완료: {filename}")
+        print(f"[MuJoCo] mp4 저장 완료 (frames: {len(video_frames)}): {filename}")
         print ("Done.")
     
-    def grab_image(self, target_spheres: Dict[str, np.ndarray], renderer: mujoco.Renderer) -> np.ndarray:
+    def grab_image(self, target_spheres: Dict[str, np.ndarray], renderer: mujoco.Renderer, show_target_spheres: bool = True) -> np.ndarray:
         mujoco.mj_forward(self.env.model, self.env.data)
 
         # pelvis 위치를 중심으로 카메라 위치 업데이트
@@ -284,49 +457,78 @@ class MDMToHumanoidRetargeter():
         # free camera 사용
         renderer.update_scene(self.env.data, camera=self.free_cam)
         frame = renderer.render()
+        color_map = {
+            k: (128, 128, 128) for k in target_spheres.keys() # gray
+        }
+        color_map['la'] = (0, 0, 0) # black
+        color_map['ra'] = (0, 255, 0) # green
+        color_map['hip'] = (255, 0, 0) # red
+        color_map['neck'] = (0, 0, 255) # blue
 
-        # (옵션) 점 찍기
-        cx, cy = self.width // 2, self.height // 2
-        scale = 80.0
-        for k, p in target_spheres.items():
-            u = int(cx + p[0] * scale)
-            v = int(cy - p[1] * scale)
-            color = (0, 0, 255) if k == 'hip' else (0, 255, 0) if k == 'neck' else (128, 128, 128)
-            frame = cv2.circle(frame, (u, v), 5, color, -1)
+        if show_target_spheres:
+            cx, cy = self.width // 2, self.height // 2
+            scale = 80.0
+            for k, p in target_spheres.items():
+                u = int(cx + p[0] * scale)
+                v = int(cy - p[1] * scale)
+                frame = cv2.circle(frame, (u, v), 5, color_map[k], -1)
 
         return frame
 
 
-def main(
-    motion_file = './save/humanml_enc_512_50steps/samples_humanml_enc_512_50steps_000750000_seed10_a_person_walks_forward/results.npy',
+def retarget_motion(
+    # motion_file = './save/humanml_enc_512_50steps/samples_humanml_enc_512_50steps_000750000_seed10_a_person_walks_forward/results.npy',
+    motion_file = '/scratch2/iyy1112/motion-persona/save/20250805_mdm_type3/gpu_4/motion_1850_rep_00/motion.npy',
     output_file = './save/retargeted_motion.mp4',
+    # output_file = '/scratch2/iyy1112/motion-persona/save/20250805_mdm_type3/gpu_4/motion_1849_rep_00/retarget_motion_1849_rep_00.mp4',
     xml_path = '../exercise-yet-another-mujoco-tutorial-v3/asset/unitree_g1/scene_g1.xml',
-    scale = 2.0,
-    rotation = (-90, 0, -90),
+    # xml_path = '../exercise-yet-another-mujoco-tutorial-v3/asset/unitree_g1/g1.xml',
+    position_offset = None,
+    scale = None,
+    rotation = None, # (89.7, 0, 0)
+    show_target_spheres = True
 ):
     if not os.path.exists(motion_file):
         raise FileNotFoundError(f"💡 모션 파일을 찾을 수 없습니다: {motion_file}")
     else:
         data = np.load(motion_file, allow_pickle=True).item()
-        motion_data = data['motion']
-        print(f"🎯 원본 모션 데이터: {motion_data.shape}")
+        
+        # Handle both individual motion files and combined results files
+        if 'motion' in data and isinstance(data['motion'], dict):
+            # Individual motion file (from generate.py)
+            motion_data = data['motion']['motion']
+            print(f"🎯 개별 모션 파일에서 로드: {motion_data.shape}")
+        elif 'motion' in data and isinstance(data['motion'], np.ndarray):
+            # Combined results file
+            motion_data = data['motion']
+            print(f"🎯 통합 결과 파일에서 로드: {motion_data.shape}")
+        else:
+            # Direct motion data
+            motion_data = data
+            print(f"🎯 직접 모션 데이터: {motion_data.shape}")
 
     env = MuJoCoParserClass(name='G1_tmp', rel_xml_path=xml_path, verbose=False)
-    
-    if scale is None or rotation is None:
-        scale, rotation = auto_scale_and_rotation(motion_data, env)
-    rot = R.from_euler('xyz', rotation).as_matrix()
-    for i in range(len(motion_data)):
-        for j in range(len(motion_data[i])):
-            motion_data[i][j] *= scale
-            motion_data[i][j] = rot @ motion_data[i][j]
-    print(f"✅ scale({scale}) 및 rotation{rotation} 적용 완료")
-
     retargeter = MDMToHumanoidRetargeter(env)
-    retargeter.retarget_g1_mujoco(motion_data, filename=output_file)
+    retargeter.retarget_g1_mujoco(
+        motion_data, 
+        filename=output_file, 
+        show_target_spheres=show_target_spheres, 
+        position_offset=position_offset,
+        scale=scale, 
+        rotation=rotation
+    )
     print("\n🎉 G1 리타게팅 완료!")
+
+
+def meta_run(
+    motions = '../ex-MoMo/save/20250724_1224',
+):
+    motion_dirs = os.listdir(motions)
+    for motion_dir in motion_dirs:
+        motion_file = os.path.join(motions, motion_dir, 'results.npy')
+        retarget_motion(motion_file=motion_file, output_file=os.path.join(motions, motion_dir, f'{motion_dir}.mp4'))
 
 
 if __name__ == "__main__":
     import fire
-    fire.Fire(main)
+    fire.Fire(retarget_motion)
